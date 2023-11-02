@@ -1,0 +1,144 @@
+# preparing data for statistical and GBDT models
+
+x_train = hstack((train_unigrams, train_btgrams, train_charngrams)).tocsr()
+y_train = train['label'].values
+x_dev = hstack((dev_unigrams, dev_btgrams, dev_charngrams)).tocsr()
+y_dev = dev['label'].values
+x_test = hstack((test_unigrams, test_btgrams, test_charngrams)).tocsr()
+
+# logistic regression classifier
+
+clf = LogisticRegression(C = 0.1, solver = 'liblinear')
+clf.fit(x_train, y_train)
+
+lr_dev_pred = clf.predict_proba(x_dev)[:, 1]
+lr_test_pred = clf.predict_proba(x_test)[:, 1]
+
+train_labels['lr'] = (clf.predict_proba(x_train)[:, 1] >= 0.5).astype(int)
+dev_labels['lr'] = (clf.predict_proba(x_dev)[:, 1] >= 0.5).astype(int)
+
+y_pred = (lr_dev_pred >= 0.5).astype(int)
+lr_precision = precision_score(y_dev, y_pred)
+lr_recall = recall_score(y_dev, y_pred)
+lr_f1 = f1_score(y_dev, y_pred)
+
+print("Logistic Regression...")
+print("Precision score : " + str(lr_precision))
+print("Recall score : " + str(lr_recall))
+print("F1 score : " + str(lr_f1))
+
+# SVM classifier
+
+# reducing the number of features using Singular Value Decomposition
+svd = TruncatedSVD(n_components = 15)
+svd.fit(vstack((x_train, x_dev, x_test)).tocsr())
+x_train_svd = svd.transform(x_train)
+x_dev_svd = svd.transform(x_dev)
+x_test_svd = svd.transform(x_test)
+
+# scaling the data obtained from SVD
+scaler = StandardScaler()
+scaler.fit(np.concatenate((x_train_svd, x_dev_svd, x_test_svd)))
+x_train_svd = scaler.transform(x_train_svd)
+x_dev_svd = scaler.transform(x_dev_svd)
+x_test_svd = scaler.transform(x_test_svd)
+
+clf = SVC(C = 0.1, probability = True)
+clf.fit(x_train_svd, y_train)
+
+svm_dev_pred = clf.predict_proba(x_dev_svd)[:, 1]
+svm_test_pred = clf.predict_proba(x_test_svd)[:, 1]
+
+train_labels['svm'] = (clf.predict_proba(x_train_svd)[:, 1] >= 0.5).astype(int)
+dev_labels['svm'] = (clf.predict_proba(x_dev_svd)[:, 1] >= 0.5).astype(int)
+y_pred = (svm_dev_pred >= 0.5).astype(int)
+svm_precision = precision_score(y_dev, y_pred)
+svm_recall = recall_score(y_dev, y_pred)
+svm_f1 = f1_score(y_dev, y_pred)
+
+print("SVM Classifier...")
+print("Precision score : " + str(svm_precision))
+print("Recall score : " + str(svm_recall))
+print("F1 score : " + str(svm_f1))
+
+# lgbm classifier
+
+import lightgbm as lgb
+
+d_train = lgb.Dataset(x_train, label = y_train)
+d_dev = lgb.Dataset(x_dev, label = y_dev)
+valid_sets = [d_train, d_dev]
+
+params = {'learning_rate': 0.2,
+          'application': 'binary',
+          'num_leaves': 31,
+          'verbosity': -1,
+          'bagging_fraction': 0.8,
+          'feature_fraction': 0.6,
+          'nthread': 4,
+          'lambda_l1': 1,
+          'lambda_l2': 1}
+
+model = lgb.train(params,
+                  train_set = d_train,
+                  num_boost_round = 25,
+                  valid_sets = valid_sets,
+                  feval = lgb_f1_score,
+                  verbose_eval = False)
+lgb_dev_pred = model.predict(x_dev)
+lgb_test_pred = model.predict(x_test)
+
+train_labels['lgb'] = (model.predict(x_train) >= 0.5).astype(int)
+dev_labels['lgb'] = (model.predict(x_dev) >= 0.5).astype(int)
+
+y_pred = (lgb_dev_pred >= 0.5).astype(int)
+lgb_precision = precision_score(y_dev, y_pred)
+lgb_recall = recall_score(y_dev, y_pred)
+lgb_f1 = f1_score(y_dev, y_pred)
+
+print("LGBM Classifier...")
+print("Precision score : " + str(lgb_precision))
+print("Recall score : " + str(lgb_recall))
+print("F1 score : " + str(lgb_f1))
+
+# XGBoost classifier
+
+import xgboost as xgb
+
+d_train = xgb.DMatrix(x_train, label = y_train)
+d_dev = xgb.DMatrix(x_dev, label = y_dev)
+d_test = xgb.DMatrix(x_test)
+evallist = [(d_train, 'train'), (d_dev, 'valid')]
+
+params = {'booster' : 'gbtree',
+          'nthread' : 4,
+          'eta' : 0.2,
+          'max_depth' : 6,
+          'min_child_weight' : 4,
+          'subsample' : 0.7,
+          'colsample_bytree' : 0.7,
+          'objective' : 'binary:logistic'}
+
+model = xgb.train(params, 
+                  d_train, 
+                  num_boost_round = 21,
+                  evals = evallist,
+                  feval = xgb_f1_score,
+                  verbose_eval = False)
+xgb_dev_pred = model.predict(d_dev, ntree_limit = 21)
+xgb_test_pred = model.predict(d_test, ntree_limit = 21)
+
+train_labels['xgb'] = (model.predict(d_train, ntree_limit = 21) >= 0.5).astype(int)
+dev_labels['xgb'] = (model.predict(d_dev, ntree_limit = 21) >= 0.5).astype(int)
+
+y_pred = (xgb_dev_pred >= 0.5).astype(int)
+xgb_precision = precision_score(y_dev, y_pred)
+xgb_recall = recall_score(y_dev, y_pred)
+xgb_f1 = f1_score(y_dev, y_pred)
+
+print("XGBoost Classifier...")
+print("Precision score : " + str(xgb_precision))
+print("Recall score : " + str(xgb_recall))
+print("F1 score : " + str(xgb_f1))
+
+
