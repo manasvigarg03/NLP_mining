@@ -1,0 +1,67 @@
+# corpus containing all the sentences in train, development and test data
+
+corpus = (pd.concat([train.iloc[:, 0:2], dev.iloc[:, 0:2], test.iloc[:, 0:2]])).sentence
+clean_corpus = corpus.apply(lambda x : clean(x))
+
+# tf-idf vectors with unigram features
+
+unigram_tfv = TfidfVectorizer(strip_accents = 'unicode', analyzer = 'word', ngram_range = (1,1),
+                              sublinear_tf = 1, stop_words = 'english')
+unigram_tfv.fit(clean_corpus)
+
+train_unigrams = unigram_tfv.transform(clean_corpus.iloc[:train.shape[0]])
+dev_unigrams = unigram_tfv.transform(clean_corpus.iloc[train.shape[0]:train.shape[0]+dev.shape[0]])
+test_unigrams = unigram_tfv.transform(clean_corpus.iloc[train.shape[0]+dev.shape[0]:])
+
+# tf-idf vectors with bigram and trigram features
+
+btgram_tfv = TfidfVectorizer(strip_accents = 'unicode', analyzer = 'word', ngram_range = (2,3),
+            sublinear_tf = 1, stop_words = 'english')
+btgram_tfv.fit(clean_corpus)
+
+train_btgrams = btgram_tfv.transform(clean_corpus.iloc[:train.shape[0]])
+dev_btgrams = btgram_tfv.transform(clean_corpus.iloc[train.shape[0]:train.shape[0]+dev.shape[0]])
+test_btgrams = btgram_tfv.transform(clean_corpus.iloc[train.shape[0]+dev.shape[0]:])
+
+
+# tf-idf vectors with char n-gram features
+
+charngram_tfv = TfidfVectorizer(strip_accents = 'unicode', analyzer = 'char', ngram_range = (1,5),
+                sublinear_tf = 1, stop_words = 'english')
+charngram_tfv.fit(clean_corpus)
+
+train_charngrams =  charngram_tfv.transform(clean_corpus.iloc[:train.shape[0]])
+dev_charngrams = charngram_tfv.transform(clean_corpus.iloc[train.shape[0]:train.shape[0]+dev.shape[0]])
+test_charngrams = charngram_tfv.transform(clean_corpus.iloc[train.shape[0]+dev.shape[0]:])
+
+# evaluation functions for different models
+
+def lgb_f1_score(preds, train_data):
+    y_train = train_data.get_label()
+    preds = (preds >= 0.5).astype(int)
+    return 'f1_score', f1_score(y_train, preds), True
+
+def xgb_f1_score(preds, train_data):
+    y_train = train_data.get_label()
+    preds = (preds >= 0.5).astype(int)
+    return 'f1_score', f1_score(y_train, preds)
+
+def nn_f1_score(y_true, y_pred):
+    y_pred = tf.cast((y_pred >= 0.5), tf.float32)
+    tp = K.sum(K.cast(y_true*y_pred, 'float'), axis = 0)
+    tn = K.sum(K.cast((1-y_true)*(1-y_pred), 'float'), axis = 0)
+    fp = K.sum(K.cast((1-y_true)*y_pred, 'float'), axis = 0)
+    fn = K.sum(K.cast(y_true*(1-y_pred), 'float'), axis = 0)
+
+    p = tp / (tp + fp + K.epsilon())
+    r = tp / (tp + fn + K.epsilon())
+
+    f1 = 2*p*r / (p+r+K.epsilon())
+    f1_score = tf.where(tf.is_nan(f1), tf.zeros_like(f1), f1)
+    return K.mean(f1_score)
+
+# dataframes for blending
+
+train_labels = pd.DataFrame()
+dev_labels = pd.DataFrame()
+
