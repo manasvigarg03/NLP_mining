@@ -1,0 +1,181 @@
+# settings
+
+os.environ['OMP_NUM_THREADS'] = '4'
+start_time = time.time()
+color = sns.color_palette()
+sns.set_style("dark")
+warnings.filterwarnings("ignore")
+
+eng_stopwords = set(stopwords.words("english"))
+lem = WordNetLemmatizer()
+ps = PorterStemmer()
+tokenizer = TweetTokenizer()
+
+%matplotlib inline
+
+  # import the dataset
+
+train = pd.read_csv("../input/midasiiitd/V1.4_Training.csv", encoding = 'latin-1')
+dev = pd.read_csv("../input/midasiiitd/SubtaskA_Trial_Test_Labeled.csv", encoding = 'latin-1')
+test = pd.read_csv("../input/midasiiitd/SubtaskA_EvaluationData.csv", encoding = 'latin-1')
+
+  print("Training data...
+        <class 'pandas.core.frame.DataFrame'>
+RangeIndex: 8500 entries, 0 to 8499
+Data columns (total 3 columns):
+id          8500 non-null object
+sentence    8500 non-null object
+label       8500 non-null int64
+dtypes: int64(1), object(2)
+memory usage: 199.3+ KB")
+train.info()
+
+# class-imbalance in training data
+
+suggestion_count = (train['label'].values == 1).astype(int).sum()
+non_suggestion_count = (train['label'].values == 0).astype(int).sum()
+print("Total sentences : " + str(train.shape[0]))
+print("Total suggestions : " + str(suggestion_count))
+print("Total non_suggestions : " + str(non_suggestion_count))
+
+# oversampling to balance the training data
+
+suggestions = train[train['label'].values == 1]
+
+while suggestion_count < non_suggestion_count:
+    random_suggestion = suggestions.sample()
+    train = train.append(random_suggestion, ignore_index = True)
+    suggestion_count = suggestion_count + 1
+
+train.info()
+
+# exploring the development/validation data
+
+print("Development Set...
+      <class 'pandas.core.frame.DataFrame'>
+RangeIndex: 592 entries, 0 to 591
+Data columns (total 3 columns):
+id          592 non-null object
+sentence    592 non-null object
+label       592 non-null int64
+dtypes: int64(1), object(2)
+memory usage: 14.0+ KB")
+dev.info()
+
+# class-imbalance in development data
+
+suggestion_count = (dev['label'].values == 1).astype(int).sum()
+non_suggestion_count = (dev['label'].values == 0).astype(int).sum()
+print("Total sentences : " + str(dev.shape[0]))
+print("Total suggestions : " + str(suggestion_count))
+print("Total non_suggestions : " + str(non_suggestion_count))
+
+# Aphost lookup dict
+
+APPO = {
+    "aren't" : "are not",
+    "can't" : "cannot",
+    "couldn't" : "could not",
+    "didn't" : "did not",
+    "doesn't" : "does not",
+    "don't" : "do not",
+    "hadn't" : "had not",
+    "hasn't" : "has not",
+    "haven't" : "have not",
+    "he'd" : "he would",
+    "he'll" : "he will",
+    "he's" : "he is",
+    "i'd" : "I would",
+    "i'd" : "I had",
+    "i'll" : "I will",
+    "i'm" : "I am",
+    "isn't" : "is not",
+    "it's" : "it is",
+    "it'll":"it will",
+    "i've" : "I have",
+    "let's" : "let us",
+    "mightn't" : "might not",
+  "mustn't" : "must not",
+    "shan't" : "shall not",
+    "she'd" : "she would",
+    "she'll" : "she will",
+    "she's" : "she is",
+    "shouldn't" : "should not",
+    "that's" : "that is",
+    "there's" : "there is",
+    "they'd" : "they would",
+    "they'll" : "they will",
+    "they're" : "they are",
+    "they've" : "they have",
+    "we'd" : "we would",
+    "we're" : "we are",
+    "weren't" : "were not",
+    "we've" : "we have",
+    "what'll" : "what will",
+    "what're" : "what are",
+    "what's" : "what is",
+    "what've" : "what have",
+    "where's" : "where is",
+    "who'd" : "who would",
+    "who'll" : "who will",
+    "who're" : "who are",
+    "who's" : "who is",
+  "who've" : "who have",
+    "won't" : "will not",
+    "wouldn't" : "would not",
+    "you'd" : "you would",
+    "you'll" : "you will",
+    "you're" : "you are",
+    "you've" : "you have",
+    "'re": " are",
+    "wasn't": "was not",
+    "we'll":" will",
+    "didn't": "did not",
+    "tryin'":"trying"
+}
+
+def clean(sentence):
+    sentence = sentence.lower()
+    sentence = re.sub('<.*>', '', sentence)
+    sentence = re.sub("\\n", "", sentence)
+    sentence = re.sub("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", "", sentence)
+    sentence = re.sub("\[\[.*\]", "", sentence)
+    sentence = re.sub("[" + re.sub("\.","",string.punctuation) + "]", "", sentence)
+    
+    words = tokenizer.tokenize(sentence)
+    
+    words = [APPO[word] if word in APPO else word for word in words]
+    words = [ps.stem(word) for word in words]
+    words = [lem.lemmatize(word, "v") for word in words]
+    words = [w for w in words if not w in eng_stopwords]
+    
+    clean_sent = " ".join(words)
+    
+    return(clean_sent)
+
+# obtaining separate clean corpora for suggestion and non-suggestion classes
+
+suggestion_corpus = train[train['label'].values == 1].sentence
+suggestion_corpus = suggestion_corpus.append(dev[dev['label'].values == 1].sentence)
+clean_suggestion_corpus = ""
+for sentence in suggestion_corpus:
+    clean_suggestion_corpus += clean(sentence)
+
+non_suggestion_corpus = train[train['label'].values == 0].sentence
+non_suggestion_corpus = non_suggestion_corpus.append(dev[dev['label'].values == 0].sentence)
+clean_non_suggestion_corpus = ""
+for sentence in non_suggestion_corpus:
+    clean_non_suggestion_corpus += clean(sentence)
+
+# top 20 bigrams in suggestion sentences
+
+suggestion_bigrams = ngrams(clean_suggestion_corpus.split(), 2)
+suggestion_bigrams_freq = collections.Counter(suggestion_bigrams)
+suggestion_bigrams_freq.most_common(20)
+
+# top 20 bigrams in non-suggestion sentences
+
+non_suggestion_bigrams = ngrams(clean_non_suggestion_corpus.split(), 2)
+non_suggestion_bigrams_freq = collections.Counter(non_suggestion_bigrams)
+non_suggestion_bigrams_freq.most_common(20)
+
